@@ -10,6 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	dryRun bool
+)
+
 var migrateCmd = &cobra.Command{
 	Use:   "migrate <env>",
 	Short: "Generate migration file for target environment",
@@ -29,13 +33,21 @@ var migrateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("load current snapshot: %w", err)
 		}
-		// For now, show usage message
-		fmt.Println("Migration requires a base snapshot. Use:")
-		fmt.Println("  schema-sync diff <env1> <env2> to compare snapshots")
 
 		// Placeholder: create empty migration if needed
 		gen := migrate.NewGenerator(cfg.Settings.OutputDir)
 		diffResult := &schema.DiffResult{}
+
+		if dryRun {
+			// Write SQL to stdout instead of file
+			sql, err := gen.GenerateMigrationSQL(env, diffResult)
+			if err != nil {
+				return fmt.Errorf("generate migration SQL: %w", err)
+			}
+			fmt.Println(sql)
+			return nil
+		}
+
 		path, err := gen.GenerateMigration(env, diffResult)
 		if err != nil {
 			return fmt.Errorf("generate migration: %w", err)
@@ -46,6 +58,6 @@ var migrateCmd = &cobra.Command{
 	},
 }
 
-func loadPreviousSnapshot(env string) (*schema.Schema, error) {
-	return nil, fmt.Errorf("previous snapshot not available")
+func init() {
+	migrateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview migration SQL to stdout instead of writing to file")
 }
