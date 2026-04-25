@@ -13,15 +13,36 @@ import (
 // Generator handles migration file generation
 type Generator struct {
 	outputDir string
+	dryRun    bool
 }
 
 // NewGenerator creates a new migration generator
-func NewGenerator(outputDir string) *Generator {
-	return &Generator{outputDir: outputDir}
+func NewGenerator(outputDir string, dryRun bool) *Generator {
+	return &Generator{outputDir: outputDir, dryRun: dryRun}
 }
 
 // GenerateMigration creates a migration file from diff results
 func (g *Generator) GenerateMigration(env string, diff *schema.DiffResult) (string, error) {
+	var sb strings.Builder
+
+	// Build migration SQL
+	sb.WriteString("-- +migrate Up\n")
+	sb.WriteString("-- +migrate StatementBegin\n")
+	g.writeUpMigration(&sb, diff)
+	sb.WriteString("-- +migrate StatementEnd\n\n")
+
+	sb.WriteString("-- +migrate Down\n")
+	sb.WriteString("-- +migrate StatementBegin\n")
+	g.writeDownMigration(&sb, diff)
+	sb.WriteString("-- +migrate StatementEnd\n")
+
+	output := sb.String()
+
+	if g.dryRun {
+		fmt.Print(output)
+		return "", nil
+	}
+
 	if err := os.MkdirAll(g.outputDir, 0755); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
@@ -36,54 +57,44 @@ func (g *Generator) GenerateMigration(env string, diff *schema.DiffResult) (stri
 	}
 	defer f.Close()
 
-	// Write UP migration
-	f.WriteString("-- +migrate Up\n")
-	f.WriteString("-- +migrate StatementBegin\n")
-	g.writeUpMigration(f, diff)
-	f.WriteString("-- +migrate StatementEnd\n\n")
-
-	// Write DOWN migration
-	f.WriteString("-- +migrate Down\n")
-	f.WriteString("-- +migrate StatementBegin\n")
-	g.writeDownMigration(f, diff)
-	f.WriteString("-- +migrate StatementEnd\n")
+	f.WriteString(output)
 
 	return filepath, nil
 }
 
-func (g *Generator) writeUpMigration(f *os.File, diff *schema.DiffResult) {
+func (g *Generator) writeUpMigration(sb *strings.Builder, diff *schema.DiffResult) {
 	// Added tables
 	for _, t := range diff.Added {
-		f.WriteString(g.generateCreateTable(t))
+		sb.WriteString(g.generateCreateTable(t))
 	}
 
 	// Modified tables
 	for _, td := range diff.Modified {
-		g.writeTableChangesUp(f, td)
+		g.writeTableChangesUp(sb, td)
 	}
 
 	// Removed tables (only in DOWN, not UP)
-	_ = f
+	_ = sb
 }
 
-func (g *Generator) writeDownMigration(f *os.File, diff *schema.DiffResult) {
+func (g *Generator) writeDownMigration(sb *strings.Builder, diff *schema.DiffResult) {
 	// Removed tables
 	for _, t := range diff.Removed {
-		f.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", t.Name))
+		sb.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", t.Name))
 	}
 
 	// Modified tables - rollback in reverse
 	for _, td := range diff.Modified {
-		g.writeTableChangesDown(f, td)
+		g.writeTableChangesDown(sb, td)
 	}
 
 	// Added tables - drop them
 	for _, t := range diff.Added {
-		f.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", t.Name))
+		sb.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", t.Name))
 	}
 }
 
-func (g *Generator) writeTableChangesUp(f *os.File, td schema.TableDiff) {
+func (g *Generator) writeTableChangesUp(sb *strings.Builder, td schema.TableDiff) {
 	// Added columns
 	for _, col := range td.AddedColumns {
 		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", td.TableName, col.Name, col.Type)
@@ -93,47 +104,47 @@ func (g *Generator) writeTableChangesUp(f *os.File, td schema.TableDiff) {
 		if col.Default != nil {
 			stmt += fmt.Sprintf(" DEFAULT %s", *col.Default)
 		}
-		f.WriteString(stmt + ";\n")
+		sb.WriteString(stmt + ";\n")
 	}
 
 	// Modified columns
 	for _, mc := range td.ModifiedColumns {
 		stmt := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", td.TableName, mc.Name, mc.NewType)
-		f.WriteString(stmt + ";\n")
+		sb.WriteString(stmt + ";\n")
 		if mc.OldNull != mc.NewNull {
 			if mc.NewNull {
-				f.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;\n", td.TableName, mc.Name))
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;\n", td.TableName, mc.Name))
 			} else {
-				f.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;\n", td.TableName, mc.Name))
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;\n", td.TableName, mc.Name))
 			}
 		}
 	}
 
 	// Added indexes
 	for _, idx := range td.AddedIndexes {
-		f.WriteString(g.generateCreateIndex(td.TableName, idx))
+		sb.WriteString(g.generateCreateIndex(td.TableName, idx))
 	}
 
 	// Added foreign keys
 	for _, fk := range td.AddedFKs {
-		f.WriteString(g.generateAddFK(td.TableName, fk))
+		sb.WriteString(g.generateAddFK(td.TableName, fk))
 	}
 }
 
-func (g *Generator) writeTableChangesDown(f *os.File, td schema.TableDiff) {
+func (g *Generator) writeTableChangesDown(sb *strings.Builder, td schema.TableDiff) {
 	// Drop added foreign keys
 	for _, fk := range td.AddedFKs {
-		f.WriteString(fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\n", td.TableName, fk.Name))
+		sb.WriteString(fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\n", td.TableName, fk.Name))
 	}
 
 	// Drop added indexes
 	for _, idx := range td.AddedIndexes {
-		f.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %s;\n", idx.Name))
+		sb.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %s;\n", idx.Name))
 	}
 
 	// Drop added columns
 	for _, col := range td.AddedColumns {
-		f.WriteString(fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;\n", td.TableName, col.Name))
+		sb.WriteString(fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;\n", td.TableName, col.Name))
 	}
 }
 

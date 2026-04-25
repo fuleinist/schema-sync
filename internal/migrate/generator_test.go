@@ -11,7 +11,7 @@ import (
 
 func TestGenerator_GenerateMigration_AddedTable(t *testing.T) {
 	tmpDir := t.TempDir()
-	gen := NewGenerator(tmpDir)
+	gen := NewGenerator(tmpDir, false)
 
 	diff := &schema.DiffResult{
 		Added: []schema.Table{
@@ -74,7 +74,7 @@ func TestGenerator_GenerateMigration_AddedTable(t *testing.T) {
 
 func TestGenerator_GenerateMigration_ModifiedColumns(t *testing.T) {
 	tmpDir := t.TempDir()
-	gen := NewGenerator(tmpDir)
+	gen := NewGenerator(tmpDir, false)
 
 	diff := &schema.DiffResult{
 		Modified: []schema.TableDiff{
@@ -113,7 +113,7 @@ func TestGenerator_GenerateMigration_ModifiedColumns(t *testing.T) {
 
 func TestGenerator_GenerateMigration_AddedIndex(t *testing.T) {
 	tmpDir := t.TempDir()
-	gen := NewGenerator(tmpDir)
+	gen := NewGenerator(tmpDir, false)
 
 	diff := &schema.DiffResult{
 		Modified: []schema.TableDiff{
@@ -148,7 +148,7 @@ func TestGenerator_GenerateMigration_AddedIndex(t *testing.T) {
 
 func TestGenerator_GenerateMigration_RemovedTable(t *testing.T) {
 	tmpDir := t.TempDir()
-	gen := NewGenerator(tmpDir)
+	gen := NewGenerator(tmpDir, false)
 
 	diff := &schema.DiffResult{
 		Removed: []schema.Table{
@@ -175,7 +175,7 @@ func TestGenerator_GenerateMigration_RemovedTable(t *testing.T) {
 
 func TestGenerator_GenerateMigration_FilenameFormat(t *testing.T) {
 	tmpDir := t.TempDir()
-	gen := NewGenerator(tmpDir)
+	gen := NewGenerator(tmpDir, false)
 
 	diff := &schema.DiffResult{}
 
@@ -198,7 +198,7 @@ func TestGenerator_GenerateMigration_FilenameFormat(t *testing.T) {
 
 func TestGenerator_GenerateMigration_DefaultValue(t *testing.T) {
 	tmpDir := t.TempDir()
-	gen := NewGenerator(tmpDir)
+	gen := NewGenerator(tmpDir, false)
 
 	defaultVal := "false"
 	diff := &schema.DiffResult{
