@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/fuleinist/schema-sync/internal/config"
 	"github.com/fuleinist/schema-sync/internal/diff"
@@ -44,7 +45,12 @@ var diffCmd = &cobra.Command{
 }
 
 func loadSnapshot(dir, snapshotDir, env string) (*schema.Schema, error) {
-	snapshotFile := snapshotDir + "/" + env + ".json"
+	// `dir` is the project root (typically `os.Getwd()`). The snapshot
+	// writer in `cmd/snapshot.go` writes to `filepath.Join(dir, snapshotDir, ...)`,
+	// so the reader must join the same way; using a bare relative path
+	// (`snapshotDir + "/" + env + ".json"`) only works by accident when
+	// the caller's CWD happens to equal `dir`.
+	snapshotFile := filepath.Join(dir, snapshotDir, env+".json")
 	data, err := os.ReadFile(snapshotFile)
 	if err != nil {
 		return nil, fmt.Errorf("read snapshot %s: %w", env, err)
