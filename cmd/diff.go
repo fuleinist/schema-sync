@@ -95,8 +95,31 @@ func printDiff(result *schema.DiffResult) {
 				fmt.Printf("      - column: %s %s\n", c.Name, c.Type)
 			}
 			for _, mc := range td.ModifiedColumns {
-				fmt.Printf("      ~ column: %s %s -> %s\n", mc.Name, mc.OldType, mc.NewType)
+				// compareTables records a modified column whenever Type,
+				// Nullable, or Default changes; the display must reflect
+				// every change so users see the full diff (e.g. a
+				// nullability flip from NOT NULL to NULL was previously
+				// hidden behind an unchanged Type string).
+				typeChanged := mc.OldType != mc.NewType
+				if typeChanged {
+					fmt.Printf("      ~ column: %s %s -> %s\n", mc.Name, mc.OldType, mc.NewType)
+				} else {
+					fmt.Printf("      ~ column: %s\n", mc.Name)
+				}
+				if mc.OldNull != mc.NewNull {
+					fmt.Printf("          nullable: %t -> %t\n", mc.OldNull, mc.NewNull)
+				}
+				if !diff.EqualDefault(mc.OldDefault, mc.NewDefault) {
+					fmt.Printf("          default: %s -> %s\n", formatDefault(mc.OldDefault), formatDefault(mc.NewDefault))
+				}
 			}
 		}
 	}
+}
+
+func formatDefault(d *string) string {
+	if d == nil {
+		return "NULL"
+	}
+	return *d
 }
