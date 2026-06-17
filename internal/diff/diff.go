@@ -83,7 +83,7 @@ func compareTables(oldTable, newTable schema.Table) schema.TableDiff {
 	for name, newCol := range newCols {
 		if oldCol, exists := oldCols[name]; exists {
 			if oldCol.Type != newCol.Type || oldCol.Nullable != newCol.Nullable ||
-				!equalDefault(oldCol.Default, newCol.Default) {
+				!EqualDefault(oldCol.Default, newCol.Default) {
 				td.ModifiedColumns = append(td.ModifiedColumns, schema.ColumnChange{
 					Name:      name,
 					OldType:   oldCol.Type,
@@ -136,7 +136,9 @@ func compareFKs(oldFKs, newFKs []schema.ForeignKey) []schema.ForeignKey {
 	return added
 }
 
-func equalDefault(a, b *string) bool {
+// EqualDefault reports whether two *string column default values are
+// equal. Two nil defaults are equal; one nil and one non-nil are not.
+func EqualDefault(a, b *string) bool {
 	if a == nil && b == nil {
 		return true
 	}
