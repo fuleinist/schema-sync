@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuleinist/schema-sync/internal/diff"
 	"github.com/fuleinist/schema-sync/internal/schema"
 )
 
@@ -116,6 +117,20 @@ func (g *Generator) writeTableChangesUp(sb *strings.Builder, td schema.TableDiff
 				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;\n", td.TableName, mc.Name))
 			} else {
 				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;\n", td.TableName, mc.Name))
+			}
+		}
+		// Default-value changes were previously dropped here: the diff
+		// records them (diff.compareTables) and cmd.printDiff renders
+		// them, but the UP migration never emitted a SET/DROP DEFAULT
+		// statement, so applying a migration whose only column change
+		// was the default would silently leave the column's default
+		// untouched. Use the canonical equality check so a nil default
+		// is treated the same way as in the diff path.
+		if !diff.EqualDefault(mc.OldDefault, mc.NewDefault) {
+			if mc.NewDefault == nil {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;\n", td.TableName, mc.Name))
+			} else {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;\n", td.TableName, mc.Name, *mc.NewDefault))
 			}
 		}
 	}
