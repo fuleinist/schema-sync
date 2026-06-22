@@ -228,3 +228,97 @@ func TestGenerator_GenerateMigration_DefaultValue(t *testing.T) {
 		t.Error("Missing DEFAULT value in column definition")
 	}
 }
+
+// TestGenerator_GenerateMigration_ModifiedColumnDefaultSet verifies that
+// a column whose only change is its default value (Type and Nullable
+// unchanged) produces a SET DEFAULT statement in the UP migration.
+// Previously, default changes were detected by the diff and rendered
+// by `cmd.printDiff`, but the migration generator only emitted ALTER
+// COLUMN for type/nullability flips — so applying the migration would
+// silently leave the column's default untouched.
+func TestGenerator_GenerateMigration_ModifiedColumnDefaultSet(t *testing.T) {
+	tmpDir := t.TempDir()
+	gen := NewGenerator(tmpDir, false)
+
+	newDefault := "1"
+	diff := &schema.DiffResult{
+		Modified: []schema.TableDiff{
+			{
+				TableName: "users",
+				ModifiedColumns: []schema.ColumnChange{
+					// Only the default value changes; type and nullability
+					// stay the same so the old generator produced an
+					// empty UP migration for this column.
+					{
+						Name:       "active",
+						OldType:    "BOOLEAN",
+						NewType:    "BOOLEAN",
+						OldNull:    true,
+						NewNull:    true,
+						OldDefault: nil,
+						NewDefault: &newDefault,
+					},
+				},
+			},
+		},
+	}
+
+	path, err := gen.GenerateMigration("prod", diff)
+	if err != nil {
+		t.Fatalf("GenerateMigration failed: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	contentStr := string(content)
+
+	if !strings.Contains(contentStr, "ALTER TABLE users ALTER COLUMN active SET DEFAULT 1;") {
+		t.Errorf("expected SET DEFAULT 1 in UP migration, got:\n%s", contentStr)
+	}
+}
+
+// TestGenerator_GenerateMigration_ModifiedColumnDefaultDrop is the
+// mirror of the SET test: a column that previously had a default but
+// now has none must produce a DROP DEFAULT statement. Without this,
+// applying the migration would still leave the old default in place.
+func TestGenerator_GenerateMigration_ModifiedColumnDefaultDrop(t *testing.T) {
+	tmpDir := t.TempDir()
+	gen := NewGenerator(tmpDir, false)
+
+	oldDefault := "0"
+	diff := &schema.DiffResult{
+		Modified: []schema.TableDiff{
+			{
+				TableName: "users",
+				ModifiedColumns: []schema.ColumnChange{
+					{
+						Name:       "active",
+						OldType:    "BOOLEAN",
+						NewType:    "BOOLEAN",
+						OldNull:    true,
+						NewNull:    true,
+						OldDefault: &oldDefault,
+						NewDefault: nil,
+					},
+				},
+			},
+		},
+	}
+
+	path, err := gen.GenerateMigration("prod", diff)
+	if err != nil {
+		t.Fatalf("GenerateMigration failed: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	contentStr := string(content)
+
+	if !strings.Contains(contentStr, "ALTER TABLE users ALTER COLUMN active DROP DEFAULT;") {
+		t.Errorf("expected DROP DEFAULT in UP migration, got:\n%s", contentStr)
+	}
+}
