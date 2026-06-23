@@ -3,6 +3,7 @@ package schema
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -133,21 +134,37 @@ func (e *MySQLExtractor) extractForeignKeys(db *sql.DB, tableName string) ([]For
 	return parseMySQLForeignKeys(createSQL), nil
 }
 
+// mysqlFKRe matches a MySQL FOREIGN KEY constraint line from SHOW CREATE TABLE output.
+// Format:
+//   CONSTRAINT `fk_name` FOREIGN KEY (`col1`, `col2`) REFERENCES `ref_table` (`ref_col1`, `ref_col2`) ON DELETE CASCADE ON UPDATE CASCADE
+var mysqlFKRe = regexp.MustCompile(
+	"CONSTRAINT `([^`]+)` FOREIGN KEY \\(([^)]+)\\) REFERENCES `([^`]+)` \\(([^)]+)\\)(?: ON DELETE ((?:CASCADE|RESTRICT|SET NULL|SET DEFAULT|NO ACTION)))?(?: ON UPDATE ((?:CASCADE|RESTRICT|SET NULL|SET DEFAULT|NO ACTION)))?",
+)
+
 func parseMySQLForeignKeys(createSQL string) []ForeignKey {
 	var fks []ForeignKey
-	// Simple parser for FOREIGN KEY constraints in CREATE TABLE
-	// Format: CONSTRAINT `name` FOREIGN KEY (`col`) REFERENCES `table` (`col`) ON DELETE CASCADE ON UPDATE CASCADE
 	lines := strings.Split(createSQL, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.Contains(line, "FOREIGN KEY") {
 			continue
 		}
-		// Basic parsing - extract key parts
-		fk := ForeignKey{}
-		// Extract constraint name
-		if strings.Contains(line, "CONSTRAINT") {
-			// Could extract name but skip for simplicity
+		m := mysqlFKRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		fk := ForeignKey{
+			Name:       m[1],
+			RefTable:   m[3],
+			OnDelete:   m[5],
+			OnUpdate:   m[6],
+		}
+		// Parse column lists: split on comma, trim backticks and whitespace
+		for _, col := range strings.Split(m[2], ",") {
+			fk.Columns = append(fk.Columns, strings.Trim(strings.TrimSpace(col), "`"))
+		}
+		for _, col := range strings.Split(m[4], ",") {
+			fk.RefColumns = append(fk.RefColumns, strings.Trim(strings.TrimSpace(col), "`"))
 		}
 		fks = append(fks, fk)
 	}
