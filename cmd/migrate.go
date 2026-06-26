@@ -73,6 +73,3 @@ func init() {
 	migrateCmd.Flags().StringVar(&prevEnv, "prev-env", "", "Previous environment to compare against (e.g. --prev-env=dev to diff dev->prod)")
 }
 
-func loadPreviousSnapshot(env string) (*schema.Schema, error) {
-	return nil, fmt.Errorf("previous snapshot not available")
-}
