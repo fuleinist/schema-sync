@@ -197,6 +197,152 @@ func TestPrintDiff_ShowsTypeChange(t *testing.T) {
 	}
 }
 
+// TestDiffCmd_JsonFlag verifies that `diff --json` outputs valid JSON
+// matching the DiffResult structure, and that the exit code is 0 even
+// when there are no differences.
+func TestDiffCmd_JsonFlag(t *testing.T) {
+	dir := t.TempDir()
+	snapshotDir := ".schema-sync/snapshots"
+
+	// Write config and identical snapshots for both envs so the diff is empty.
+	os.MkdirAll(filepath.Join(dir, ".schema-sync"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".schema-sync", "config.yaml"), []byte("settings:\n  snapshot_dir: .schema-sync/snapshots\n"), 0o644)
+	writeSnapshot(t, dir, snapshotDir, "dev")
+	writeSnapshot(t, dir, snapshotDir, "prod")
+
+	// Capture stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+
+	// Simulate `schema-sync diff dev prod --json`
+	origWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origWd)
+
+	rootCmd.SetArgs([]string{"diff", "dev", "prod", "--json"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("diff --json: %v", err)
+	}
+
+	w.Close()
+	out := <-done
+
+	// Must be valid JSON
+	var parsed schema.DiffResult
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v\noutput: %s", err, out)
+	}
+
+	// Empty diff: all slices should be empty
+	if len(parsed.Added) != 0 || len(parsed.Removed) != 0 || len(parsed.Modified) != 0 {
+		t.Errorf("expected empty diff, got Added=%d Removed=%d Modified=%d",
+			len(parsed.Added), len(parsed.Removed), len(parsed.Modified))
+	}
+}
+
+// TestDiffCmd_JsonFlag_WithChanges verifies that --json output correctly
+// serializes added, removed, and modified tables.
+func TestDiffCmd_JsonFlag_WithChanges(t *testing.T) {
+	dir := t.TempDir()
+	snapshotDir := ".schema-sync/snapshots"
+
+	// Write config
+	os.MkdirAll(filepath.Join(dir, ".schema-sync"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".schema-sync", "config.yaml"), []byte("settings:\n  snapshot_dir: .schema-sync/snapshots\n"), 0o644)
+
+	// Write dev snapshot (old)
+	devPayload, _ := json.Marshal(&schema.Schema{
+		Tables: []schema.Table{
+			{Name: "users", Columns: []schema.Column{
+				{Name: "id", Type: "INTEGER", Nullable: false, Primary: true},
+				{Name: "email", Type: "VARCHAR(100)", Nullable: true},
+			}},
+		},
+	})
+	devPath := filepath.Join(dir, snapshotDir, "dev.json")
+	os.MkdirAll(filepath.Dir(devPath), 0o755)
+	os.WriteFile(devPath, devPayload, 0o644)
+
+	// Write prod snapshot (new — added table, removed column, modified column)
+	prodPayload, _ := json.Marshal(&schema.Schema{
+		Tables: []schema.Table{
+			{Name: "users", Columns: []schema.Column{
+				{Name: "id", Type: "INTEGER", Nullable: false, Primary: true},
+				{Name: "email", Type: "VARCHAR(255)", Nullable: false},
+			}},
+			{Name: "orders", Columns: []schema.Column{
+				{Name: "id", Type: "INTEGER", Nullable: false, Primary: true},
+			}},
+		},
+	})
+	prodPath := filepath.Join(dir, snapshotDir, "prod.json")
+	os.MkdirAll(filepath.Dir(prodPath), 0o755)
+	os.WriteFile(prodPath, prodPayload, 0o644)
+
+	// Capture stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+
+	origWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origWd)
+
+	rootCmd.SetArgs([]string{"diff", "dev", "prod", "--json"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("diff --json: %v", err)
+	}
+
+	w.Close()
+	out := <-done
+
+	var parsed schema.DiffResult
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v\noutput: %s", err, out)
+	}
+
+	// Expect: 1 added table (orders), 0 removed, 1 modified (users)
+	if len(parsed.Added) != 1 || parsed.Added[0].Name != "orders" {
+		t.Errorf("expected 1 added table 'orders', got %+v", parsed.Added)
+	}
+	if len(parsed.Removed) != 0 {
+		t.Errorf("expected 0 removed tables, got %d", len(parsed.Removed))
+	}
+	if len(parsed.Modified) != 1 || parsed.Modified[0].TableName != "users" {
+		t.Errorf("expected 1 modified table 'users', got %+v", parsed.Modified)
+	}
+	// users: email type VARCHAR(100)->VARCHAR(255), nullable true->false
+	mod := parsed.Modified[0]
+	if len(mod.ModifiedColumns) != 1 || mod.ModifiedColumns[0].Name != "email" {
+		t.Errorf("expected email column change, got %+v", mod.ModifiedColumns)
+	}
+	if mod.ModifiedColumns[0].OldType != "VARCHAR(100)" || mod.ModifiedColumns[0].NewType != "VARCHAR(255)" {
+		t.Errorf("expected VARCHAR(100)->VARCHAR(255), got %s->%s",
+			mod.ModifiedColumns[0].OldType, mod.ModifiedColumns[0].NewType)
+	}
+}
+
 // TestPrintDiff_ShowsAllThreeKinds exercises the full combination: a
 // single modified column where type, nullability, and default all
 // change at once. All three lines must appear so the user sees the
