@@ -39,9 +39,22 @@ var diffCmd = &cobra.Command{
 		result := diff.ComputeDiff(schema1, schema2)
 
 		// Print diff
-		printDiff(result)
+		jsonFlag, _ := cmd.Flags().GetBool("json")
+		if jsonFlag {
+			out, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal diff: %w", err)
+			}
+			fmt.Println(string(out))
+		} else {
+			printDiff(result)
+		}
 		return nil
 	},
+}
+
+func init() {
+	diffCmd.Flags().BoolP("json", "j", false, "Output diff as JSON")
 }
 
 func loadSnapshot(dir, snapshotDir, env string) (*schema.Schema, error) {
