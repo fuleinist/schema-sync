@@ -279,6 +279,66 @@ func TestGenerator_GenerateMigration_ModifiedColumnDefaultSet(t *testing.T) {
 	}
 }
 
+// TestGenerator_GenerateMigration_DownReversesModifiedColumns verifies that
+// the DOWN migration emits the inverse of every change the UP migration
+// made to a ModifiedColumns entry — type, nullability, and default.
+// Previously the DOWN block only undid AddedColumns/Indexes/FKs and
+// silently left ModifiedColumns in their post-migration state, so a
+// rollback would leave the schema drifted from the pre-migration shape.
+func TestGenerator_GenerateMigration_DownReversesModifiedColumns(t *testing.T) {
+	tmpDir := t.TempDir()
+	gen := NewGenerator(tmpDir, false)
+
+	oldDefault := "0"
+	diff := &schema.DiffResult{
+		Modified: []schema.TableDiff{
+			{
+				TableName: "users",
+				ModifiedColumns: []schema.ColumnChange{
+					{
+						Name:       "email",
+						OldType:    "VARCHAR(100)",
+						NewType:    "VARCHAR(255)",
+						OldNull:    true,
+						NewNull:    false,
+						OldDefault: &oldDefault,
+						NewDefault: nil,
+					},
+				},
+			},
+		},
+	}
+
+	path, err := gen.GenerateMigration("prod", diff)
+	if err != nil {
+		t.Fatalf("GenerateMigration failed: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	contentStr := string(content)
+
+	// Locate the DOWN block so the assertions can't be fooled by an
+	// accidental match inside the UP block.
+	downIdx := strings.Index(contentStr, "-- +migrate Down")
+	if downIdx < 0 {
+		t.Fatal("missing DOWN marker")
+	}
+	down := contentStr[downIdx:]
+
+	if !strings.Contains(down, "ALTER TABLE users ALTER COLUMN email TYPE VARCHAR(100)") {
+		t.Errorf("DOWN should revert email type to VARCHAR(100), got DOWN block:\n%s", down)
+	}
+	if !strings.Contains(down, "ALTER TABLE users ALTER COLUMN email DROP NOT NULL") {
+		t.Errorf("DOWN should DROP NOT NULL on email, got DOWN block:\n%s", down)
+	}
+	if !strings.Contains(down, "ALTER TABLE users ALTER COLUMN email SET DEFAULT 0") {
+		t.Errorf("DOWN should SET DEFAULT 0 on email, got DOWN block:\n%s", down)
+	}
+}
+
 // TestGenerator_GenerateMigration_ModifiedColumnDefaultDrop is the
 // mirror of the SET test: a column that previously had a default but
 // now has none must produce a DROP DEFAULT statement. Without this,

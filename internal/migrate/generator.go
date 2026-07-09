@@ -161,6 +161,31 @@ func (g *Generator) writeTableChangesDown(sb *strings.Builder, td schema.TableDi
 	for _, col := range td.AddedColumns {
 		sb.WriteString(fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;\n", td.TableName, col.Name))
 	}
+
+	// Revert modified columns. The UP migration applies Type, Nullable,
+	// and Default changes via writeTableChangesUp; DOWN must apply the
+	// inverse of each. Without this a rollback left the schema drifted
+	// from the pre-migration shape even though no other diff entries
+	// were present.
+	for _, mc := range td.ModifiedColumns {
+		if mc.OldType != mc.NewType {
+			sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s;\n", td.TableName, mc.Name, mc.OldType))
+		}
+		if mc.OldNull != mc.NewNull {
+			if mc.OldNull {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;\n", td.TableName, mc.Name))
+			} else {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;\n", td.TableName, mc.Name))
+			}
+		}
+		if !diff.EqualDefault(mc.OldDefault, mc.NewDefault) {
+			if mc.OldDefault == nil {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;\n", td.TableName, mc.Name))
+			} else {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;\n", td.TableName, mc.Name, *mc.OldDefault))
+			}
+		}
+	}
 }
 
 func (g *Generator) generateCreateTable(t schema.Table) string {
